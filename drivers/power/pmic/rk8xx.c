@@ -368,9 +368,11 @@ static void rk8xx_plug_out_handler(int irq, void *data)
 static int rk8xx_ofdata_to_platdata(struct udevice *dev)
 {
 	struct rk8xx_priv *rk8xx = dev_get_priv(dev);
-	u32 interrupt, phandle, val;
-	int ret;
+	/* u32 interrupt, phandle, val; */
+	/* int ret; */
+	u32 val;
 
+/*
 	phandle = dev_read_u32_default(dev, "interrupt-parent", -ENODATA);
 	if (phandle == -ENODATA) {
 		printf("Read 'interrupt-parent' failed, ret=%d\n", phandle);
@@ -382,6 +384,7 @@ static int rk8xx_ofdata_to_platdata(struct udevice *dev)
 		printf("Read 'interrupts' failed, ret=%d\n", ret);
 		return ret;
 	}
+*/
 
 /*
 	rk8xx->irq = phandle_gpio_to_irq(phandle, interrupt);
