@@ -143,6 +143,10 @@
 	u-boot,dm-pre-reloc;
 };
 
+&gpio3 {
+	u-boot,dm-pre-reloc;
+};
+
 &i2c0 {
 	status = "okay";
 	u-boot,dm-pre-reloc;

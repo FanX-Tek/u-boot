@@ -394,10 +394,6 @@
 	u-boot,dm-pre-reloc;
 };
 
-&gpio3 {
-	u-boot,dm-pre-reloc;
-};
-
 &pcfg_pull_none_drv_level_1 {
 	u-boot,dm-pre-reloc;
 };
