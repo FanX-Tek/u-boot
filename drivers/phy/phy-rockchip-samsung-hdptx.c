@@ -318,6 +318,7 @@
 
 /* lane_reg031E */
 #define LN_POLARITY_INV				BIT(2)
+#define LN_LANE_MODE				BIT(1)
 
 #define LANE_REG(lane, offset)			(0x400 * (lane) + (offset))
 
@@ -592,9 +593,21 @@ static int rockchip_hdptx_phy_set_voltages(struct rockchip_hdptx_phy *hdptx,
 					   struct phy_configure_opts_dp *dp)
 {
 	u8 lane;
+	u32 status;
+	int ret;
 
 	for (lane = 0; lane < dp->lanes; lane++)
 		rockchip_hdptx_phy_set_voltage(hdptx, dp, lane);
+
+	reset_deassert(&hdptx->lane_reset);
+
+	ret = regmap_read_poll_timeout(hdptx->grf, HDPTXPHY_GRF_STATUS0,
+				       status, FIELD_GET(PHY_RDY, status),
+				       50, 5000);
+	if (ret) {
+		dev_err(hdptx->dev, "timeout waiting for phy_rdy\n");
+		return ret;
+	}
 
 	return 0;
 }
@@ -676,17 +689,6 @@ static int rockchip_hdptx_phy_set_rate(struct rockchip_hdptx_phy *hdptx,
 
 	regmap_update_bits(hdptx->regmap, 0x081c, LANE_EN,
 			   FIELD_PREP(LANE_EN, GENMASK(dp->lanes - 1, 0)));
-
-	reset_deassert(&hdptx->lane_reset);
-	udelay(10);
-
-	ret = regmap_read_poll_timeout(hdptx->grf, HDPTXPHY_GRF_STATUS0,
-				       status, FIELD_GET(PHY_RDY, status),
-				       50, 1000);
-	if (ret) {
-		dev_err(hdptx->dev, "timeout waiting for phy_rdy\n");
-		return ret;
-	}
 
 	return 0;
 }
@@ -998,8 +1000,9 @@ static int rockchip_hdptx_phy_power_on(struct phy *phy)
 		u32 invert = hdptx->lane_polarity_invert[lane];
 
 		regmap_update_bits(hdptx->regmap, LANE_REG(lane, 0x0c78),
-				   LN_POLARITY_INV,
-				   FIELD_PREP(LN_POLARITY_INV, invert));
+				   LN_POLARITY_INV | LN_LANE_MODE,
+				   FIELD_PREP(LN_POLARITY_INV, invert) |
+				   FIELD_PREP(LN_LANE_MODE, 1));
 	}
 
 	if (mode == PHY_MODE_DP) {

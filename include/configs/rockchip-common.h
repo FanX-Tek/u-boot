@@ -8,6 +8,10 @@
 #define _ROCKCHIP_COMMON_H_
 #include <linux/sizes.h>
 
+#ifndef CFG_CPUID_OFFSET
+#define CFG_CPUID_OFFSET		0x7
+#endif
+
 #define COUNTER_FREQUENCY               24000000
 
 #if CONFIG_IS_ENABLED(TINY_FRAMEWORK) && !defined(CONFIG_ARM64)
@@ -158,7 +162,7 @@
 		"setenv devtype spinand; setenv devnum 0;" \
 	"elif rksfc dev 1; then " \
 		"setenv devtype spinor; setenv devnum 1;" \
-	"else" \
+	"else;" \
 		"setenv devtype ramdisk; setenv devnum 0;" \
 	"fi; \0"
 

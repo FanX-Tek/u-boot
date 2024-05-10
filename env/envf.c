@@ -24,6 +24,12 @@ DECLARE_GLOBAL_DATA_PTR;
 #define BLK_CNT(desc, sz)	((sz) / (desc)->blksz)
 #define ENVF_MAX		64
 
+/*
+ * env_dev maybe: boot-device, sdcard.
+ *
+ * env_size/offset/offset_redund should be updated when env_dev changed.
+ */
+static u32 env_dev;
 static ulong env_size, env_offset, env_offset_redund;
 
 #if CONFIG_IS_ENABLED(ENV_PARTITION)
@@ -44,16 +50,6 @@ static const char *envf_list[ENVF_MAX];
 #endif
 
 #ifdef CONFIG_DM_MMC
-static int pmbr_part_valid(struct partition *part)
-{
-	if (part->sys_ind == EFI_PMBR_OSTYPE_EFI_GPT &&
-		get_unaligned_le32(&part->start_sect) == 1UL) {
-		return 1;
-	}
-
-	return 0;
-}
-
 static int is_pmbr_valid(legacy_mbr * mbr)
 {
 	int i = 0;
@@ -62,10 +58,10 @@ static int is_pmbr_valid(legacy_mbr * mbr)
 		return 0;
 
 	for (i = 0; i < 4; i++) {
-		if (pmbr_part_valid(&mbr->partition_record[i])) {
+		if (mbr->partition_record[i].sys_ind == 0xc)
 			return 1;
-		}
 	}
+
 	return 0;
 }
 
@@ -76,15 +72,18 @@ static int can_find_pmbr(struct blk_desc *dev_desc)
 	/* Read legacy MBR from block 0 and validate it */
 	if ((blk_dread(dev_desc, 0, 1, (ulong *)legacymbr) != 1)
 		|| (is_pmbr_valid(legacymbr) != 1)) {
-		return -1;
+		return 0;
 	}
 
-	return 0;
+	return 1;
 }
 #endif
 
 static void envf_init_location(struct blk_desc *desc)
 {
+	if (env_dev == ((desc->if_type << 8) | desc->devnum))
+		return;
+
 	/* eMMC (default) */
 	env_size = CONFIG_ENV_SIZE;
 	env_offset = CONFIG_ENV_OFFSET;
@@ -109,6 +108,8 @@ static void envf_init_location(struct blk_desc *desc)
 #endif
 	if (env_offset == env_offset_redund)
 		env_offset_redund = 0;
+
+	env_dev = (desc->if_type << 8) | desc->devnum;
 }
 
 static int env_read(struct blk_desc *desc, u32 offset, u32 size, env_t **envp)
@@ -262,35 +263,6 @@ static int envf_init_vars(void)
 	return envf_num;
 }
 
-#ifdef CONFIG_ENV_PARTITION
-static int envf_add_partition_bootargs(void)
-{
-	char *part_list;
-	char *bootargs;
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(part_type); i++) {
-		part_list = env_get(part_type[i]);
-		if (part_list)
-			break;
-	}
-	if (!part_list)
-		return -EINVAL;
-
-	bootargs = calloc(1, strlen(part_list) + strlen(part_type[i]) + 2);
-	if (!bootargs)
-		return -ENOMEM;
-
-	strcat(bootargs, part_type[i]);
-	strcat(bootargs, "=");
-	strcat(bootargs, part_list);
-	env_update("bootargs", bootargs);
-	free(bootargs);
-
-	return 0;
-}
-#endif
-
 static int envf_load(void)
 {
 	struct blk_desc *desc;
@@ -314,10 +286,6 @@ static int envf_load(void)
 		}
 	}
 
-#ifdef CONFIG_ENV_PARTITION
-	envf_add_partition_bootargs();
-#endif
-
 	return 0;
 }
 
@@ -335,6 +303,8 @@ static int envf_save(void)
 		printf("dev desc null!\n");
 		return -EINVAL;
 	}
+
+	envf_init_location(desc);
 
 	res = (char *)env->data;
 	len = hexport_r(&env_htab, '\0', H_MATCH_KEY | H_MATCH_IDENT,

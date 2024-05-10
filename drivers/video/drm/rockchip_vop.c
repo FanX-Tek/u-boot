@@ -97,6 +97,19 @@ static bool is_uv_swap(uint32_t bus_format, uint32_t output_mode)
 		return false;
 }
 
+static bool is_rb_swap(uint32_t bus_format, uint32_t output_mode)
+{
+	/*
+	 * The default component order of serial rgb3x8 formats
+	 * is BGR. So it is needed to enable RB swap.
+	 */
+	if (bus_format == MEDIA_BUS_FMT_RGB888_3X8 ||
+	    bus_format == MEDIA_BUS_FMT_RGB888_DUMMY_4X8)
+		return true;
+	else
+		return false;
+}
+
 static int rockchip_vop_init_gamma(struct vop *vop, struct display_state *state)
 {
 	struct crtc_state *crtc_state = &state->crtc_state;
@@ -242,6 +255,7 @@ static int rockchip_vop_init(struct display_state *state)
 	bool yuv_overlay = false, post_r2y_en = false, post_y2r_en = false;
 	u16 post_csc_mode;
 	bool dclk_inv;
+	char output_type_name[30] = {0};
 
 	vop = malloc(sizeof(*vop));
 	if (!vop)
@@ -265,6 +279,12 @@ static int rockchip_vop_init(struct display_state *state)
 	vop->win_csc = vop_data->win_csc;
 	vop->version = vop_data->version;
 
+	printf("VOP:0x%8p update mode to: %dx%d%s%d, type:%s\n",
+	       vop->regs, mode->crtc_hdisplay, mode->vdisplay,
+	       mode->flags & DRM_MODE_FLAG_INTERLACE ? "i" : "p",
+	       mode->vrefresh,
+	       rockchip_get_output_if_name(conn_state->output_if, output_type_name));
+
 	/* Process 'assigned-{clocks/clock-parents/clock-rates}' properties */
 	ret = clk_set_defaults(crtc_state->dev);
 	if (ret)
@@ -272,11 +292,12 @@ static int rockchip_vop_init(struct display_state *state)
 
 	ret = clk_get_by_name(crtc_state->dev, "dclk_vop", &dclk);
 	if (!ret)
-		ret = clk_set_rate(&dclk, mode->clock * 1000);
+		ret = clk_set_rate(&dclk, mode->crtc_clock * 1000);
 	if (IS_ERR_VALUE(ret)) {
 		printf("%s: Failed to set dclk: ret=%d\n", __func__, ret);
 		return ret;
 	}
+	printf("VOP:0x%8p set crtc_clock to %dKHz\n", vop->regs, mode->crtc_clock);
 
 	memcpy(vop->regsbak, vop->regs, vop_data->reg_len);
 
@@ -298,7 +319,7 @@ static int rockchip_vop_init(struct display_state *state)
 	VOP_CTRL_SET(vop, win_channel[2], 0x56);
 	VOP_CTRL_SET(vop, dsp_blank, 0);
 
-	dclk_inv = (mode->flags & DRM_MODE_FLAG_PPIXDATA) ? 0 : 1;
+	dclk_inv = (conn_state->bus_flags & DRM_BUS_FLAG_PIXDATA_DRIVE_NEGEDGE) ? 1 : 0;
 	/* For improving signal quality, dclk need to be inverted by default on rv1106. */
 	if ((VOP_MAJOR(vop->version) == 2 && VOP_MINOR(vop->version) == 12))
 		dclk_inv = !dclk_inv;
@@ -403,8 +424,9 @@ static int rockchip_vop_init(struct display_state *state)
 	VOP_CTRL_SET(vop, hdmi_dclk_out_en,
 		     conn_state->output_mode == ROCKCHIP_OUT_MODE_YUV420 ? 1 : 0);
 
-	if (is_uv_swap(conn_state->bus_format, conn_state->output_mode))
-		VOP_CTRL_SET(vop, dsp_data_swap, DSP_RB_SWAP);
+	if (is_uv_swap(conn_state->bus_format, conn_state->output_mode) ||
+	    is_rb_swap(conn_state->bus_format, conn_state->output_mode))
+		VOP_CTRL_SET(vop, dsp_rb_swap, 1);
 	else
 		VOP_CTRL_SET(vop, dsp_data_swap, 0);
 
@@ -888,6 +910,21 @@ static int rockchip_vop_plane_check(struct display_state *state)
 	return 0;
 }
 
+static int rockchip_vop_mode_fixup(struct display_state *state)
+{
+	struct crtc_state *crtc_state = &state->crtc_state;
+	struct connector_state *conn_state = &state->conn_state;
+	struct drm_display_mode *mode = &conn_state->mode;
+
+	drm_mode_set_crtcinfo(mode, CRTC_INTERLACE_HALVE_V | CRTC_STEREO_DOUBLE);
+
+	mode->crtc_clock *= rockchip_drm_get_cycles_per_pixel(conn_state->bus_format);
+	if (crtc_state->mcu_timing.mcu_pix_total)
+		mode->crtc_clock *= crtc_state->mcu_timing.mcu_pix_total + 1;
+
+	return 0;
+}
+
 const struct rockchip_crtc_funcs rockchip_vop_funcs = {
 	.preinit = rockchip_vop_preinit,
 	.init = rockchip_vop_init,
@@ -899,4 +936,5 @@ const struct rockchip_crtc_funcs rockchip_vop_funcs = {
 	.send_mcu_cmd = rockchip_vop_send_mcu_cmd,
 	.mode_valid = rockchip_vop_mode_valid,
 	.plane_check = rockchip_vop_plane_check,
+	.mode_fixup = rockchip_vop_mode_fixup,
 };

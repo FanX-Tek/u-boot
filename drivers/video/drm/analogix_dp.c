@@ -935,13 +935,61 @@ static int analogix_dp_connector_detect(struct rockchip_connector *conn,
 	return analogix_dp_detect(dp);
 }
 
+static int analogix_dp_connector_mode_valid(struct rockchip_connector *conn,
+					    struct display_state *state)
+{
+	struct connector_state *conn_state = &state->conn_state;
+	struct videomode vm;
+
+	drm_display_mode_to_videomode(&conn_state->mode, &vm);
+
+	if (!vm.hfront_porch || !vm.hback_porch || !vm.vfront_porch || !vm.vback_porch) {
+		dev_err(dp->dev, "front porch or back porch can not be 0\n");
+		return MODE_BAD;
+	}
+
+	return MODE_OK;
+}
+
 static const struct rockchip_connector_funcs analogix_dp_connector_funcs = {
 	.init = analogix_dp_connector_init,
 	.get_edid = analogix_dp_connector_get_edid,
 	.enable = analogix_dp_connector_enable,
 	.disable = analogix_dp_connector_disable,
 	.detect = analogix_dp_connector_detect,
+	.mode_valid = analogix_dp_connector_mode_valid,
 };
+
+static u32 analogix_dp_parse_link_frequencies(struct analogix_dp_device *dp)
+{
+	struct udevice *dev = dp->dev;
+	const struct device_node *endpoint;
+	u64 frequency = 0;
+
+	endpoint = rockchip_of_graph_get_endpoint_by_regs(dev->node, 1, 0);
+	if (!endpoint)
+		return 0;
+
+	if (of_property_read_u64(endpoint, "link-frequencies", &frequency) < 0)
+		return 0;
+
+	if (!frequency)
+		return 0;
+
+	do_div(frequency, 10 * 1000);	/* symbol rate kbytes */
+
+	switch (frequency) {
+	case 162000:
+	case 270000:
+	case 540000:
+		break;
+	default:
+		dev_err(dev, "invalid link frequency value: %llu\n", frequency);
+		return 0;
+	}
+
+	return frequency;
+}
 
 static int analogix_dp_parse_dt(struct analogix_dp_device *dp)
 {
@@ -956,21 +1004,9 @@ static int analogix_dp_parse_dt(struct analogix_dp_device *dp)
 	dp->video_info.force_stream_valid =
 		dev_read_bool(dev, "analogix,force-stream-valid");
 
-	max_link_rate = dev_read_u32_default(dev, "max-link-rate", 0);
-	if (max_link_rate) {
-		switch (max_link_rate) {
-		case 1620:
-		case 2700:
-		case 5400:
-			dp->video_info.max_link_rate =
-				min_t(u8, dp->video_info.max_link_rate,
-				      drm_dp_link_rate_to_bw_code(max_link_rate * 100));
-			break;
-		default:
-			dev_err(dev, "invalid max-link-rate %d\n", max_link_rate);
-			break;
-		}
-	}
+	max_link_rate = analogix_dp_parse_link_frequencies(dp);
+	if (max_link_rate && max_link_rate < drm_dp_bw_code_to_link_rate(dp->video_info.max_link_rate))
+		dp->video_info.max_link_rate = drm_dp_link_rate_to_bw_code(max_link_rate);
 
 	if (dev_read_prop(dev, "data-lanes", &len)) {
 		num_lanes = len / sizeof(u32);
@@ -1075,8 +1111,9 @@ static const struct rockchip_dp_chip_data rk3399_edp_platform_data = {
 	.lcdsel_big = 0 | BIT(21),
 	.lcdsel_lit = BIT(5) | BIT(21),
 	.chip_type = RK3399_EDP,
+	.ssc = true,
 
-	.max_link_rate = DP_LINK_BW_2_7,
+	.max_link_rate = DP_LINK_BW_5_4,
 	.max_lane_count = 4,
 };
 

@@ -82,14 +82,7 @@ static int env_init_parts(struct blk_desc *dev_desc, struct list_head *parts_hea
 #if CONFIG_IS_ENABLED(ENVF)
 	parts_list = envf_get_part_table(dev_desc);
 #else
-	const char *parts_prefix[] = { "mtdparts", "blkdevparts", };
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(parts_prefix); i++) {
-		parts_list = env_get(parts_prefix[i]);
-		if (parts_list)
-			break;
-	}
+	parts_list = ENV_PARTITIONS;
 #endif
 	if (!parts_list)
 		return -EINVAL;
@@ -164,7 +157,7 @@ static int part_get_info_env(struct blk_desc *dev_desc, int idx,
 {
 	struct env_part *p = NULL;
 	struct list_head *node;
-	int part_num = 1;
+	int part_num = 0;
 	int ret = 0;
 
 	if (idx < 1) {
@@ -182,9 +175,9 @@ static int part_get_info_env(struct blk_desc *dev_desc, int idx,
 
 	list_for_each(node, &parts_head) {
 		p = list_entry(node, struct env_part, node);
+		part_num++;
 		if (idx == part_num)
 			break;
-		part_num++;
 	}
 
 	if (part_num < idx) {

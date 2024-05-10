@@ -510,7 +510,7 @@ static int spinand_read_page(struct spinand_device *spinand,
 			     const struct nand_page_io_req *req,
 			     bool ecc_enabled)
 {
-	u8 status;
+	u8 status = 0;
 	int ret;
 
 	ret = spinand_load_page_op(spinand, req);
@@ -518,6 +518,12 @@ static int spinand_read_page(struct spinand_device *spinand,
 		return ret;
 
 	ret = spinand_wait(spinand, &status);
+	/*
+	 * When there is data outside of OIP in the status, the status data is
+	 * inaccurate and needs to be reconfirmed
+	 */
+	if (spinand->id.data[0] == 0x01 && status && !ret)
+		ret = spinand_wait(spinand, &status);
 	if (ret < 0)
 		return ret;
 
@@ -837,6 +843,9 @@ static const struct spinand_manufacturer *spinand_manufacturers[] = {
 #ifdef CONFIG_SPI_NAND_ESMT
 	&esmt_spinand_manufacturer,
 #endif
+#ifdef CONFIG_SPI_NAND_XINCUN
+	&xincun_spinand_manufacturer,
+#endif
 #ifdef CONFIG_SPI_NAND_XTX
 	&xtx_spinand_manufacturer,
 #endif
@@ -863,9 +872,13 @@ static const struct spinand_manufacturer *spinand_manufacturers[] = {
 #endif
 #ifdef CONFIG_SPI_NAND_UNIM
 	&unim_spinand_manufacturer,
+	&unim_zl_spinand_manufacturer,
 #endif
 #ifdef CONFIG_SPI_NAND_SKYHIGH
 	&skyhigh_spinand_manufacturer,
+#endif
+#ifdef CONFIG_SPI_NAND_GSTO
+	&gsto_spinand_manufacturer,
 #endif
 };
 
@@ -1153,6 +1166,13 @@ static int spinand_init(struct spinand_device *spinand)
 		ret = spinand_select_target(spinand, i);
 		if (ret)
 			goto err_free_bufs;
+
+		/* HWP_EN must be enabled first before block unlock region is set */
+		if (spinand->id.data[0] == 0x01) {
+			ret = spinand_lock_block(spinand, HWP_EN);
+			if (ret)
+				goto err_free_bufs;
+		}
 
 		ret = spinand_lock_block(spinand, BL_ALL_UNLOCKED);
 		if (ret)

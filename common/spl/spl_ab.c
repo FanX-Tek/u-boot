@@ -284,6 +284,35 @@ static int spl_save_metadata_if_changed(struct blk_desc *dev_desc,
 	return 0;
 }
 
+static void spl_slot_set_unbootable(AvbABSlotData* slot)
+{
+	slot->priority = 0;
+	slot->tries_remaining = 0;
+	slot->successful_boot = 0;
+}
+
+/* Ensure all unbootable and/or illegal states are marked as the
+ * canonical 'unbootable' state, e.g. priority=0, tries_remaining=0,
+ * and successful_boot=0.
+ */
+static void spl_slot_normalize(AvbABSlotData* slot)
+{
+	if (slot->priority > 0) {
+		if (slot->tries_remaining == 0 && !slot->successful_boot) {
+			/* We've exhausted all tries -> unbootable. */
+			spl_slot_set_unbootable(slot);
+		}
+		if (slot->tries_remaining > 0 && slot->successful_boot) {
+			/* Illegal state - avb_ab_mark_slot_successful() and so on
+			 * will clear tries_remaining when setting successful_boot.
+			 */
+			spl_slot_set_unbootable(slot);
+		}
+	} else {
+		spl_slot_set_unbootable(slot);
+	}
+}
+
 /* If verify fail in a/b system, then decrease 1. */
 int spl_ab_decrease_tries(struct blk_desc *dev_desc)
 {
@@ -309,6 +338,13 @@ int spl_ab_decrease_tries(struct blk_desc *dev_desc)
 
 	memcpy(&ab_data_orig, &ab_data, sizeof(AvbABData));
 
+	/* Ensure data is normalized, e.g. illegal states will be marked as
+	 * unbootable and all unbootable states are represented with
+	 * (priority=0, tries_remaining=0, successful_boot=0).
+	 */
+	spl_slot_normalize(&ab_data.slots[0]);
+	spl_slot_normalize(&ab_data.slots[1]);
+
 	/* ... and decrement tries remaining, if applicable. */
 	if (!ab_data.slots[slot_index].successful_boot &&
 	    ab_data.slots[slot_index].tries_remaining > 0)
@@ -318,4 +354,39 @@ int spl_ab_decrease_tries(struct blk_desc *dev_desc)
 
 out:
 	return ret;
+}
+
+/*
+ * If boot A/B system fail, tries-remaining decrease 1
+ * and do reset automatically if still bootable.
+ */
+int spl_ab_decrease_reset(struct blk_desc *dev_desc)
+{
+	AvbABData ab_data;
+	int ret;
+
+	ret = spl_ab_data_read(dev_desc, &ab_data, "misc");
+	if (ret)
+		return ret;
+
+	/* If current device cannot boot, return and try other devices. */
+	if (!spl_slot_is_bootable(&ab_data.slots[0]) &&
+	    !spl_slot_is_bootable(&ab_data.slots[1])) {
+		printf("A/B: no bootable slot\n");
+		return -ENODEV;
+	}
+
+	/* If current device still can boot, decrease and do reset. */
+	ret = spl_ab_decrease_tries(dev_desc);
+	if (ret)
+		return ret;
+
+	printf("A/B: slot boot fail, do reset\n");
+	do_reset(NULL, 0, 0, NULL);
+
+	/*
+	 * Only do_reset() fail will arrive here, return a
+	 * negative number, then enter maskrom in the caller.
+	 */
+	return -EINVAL;
 }
